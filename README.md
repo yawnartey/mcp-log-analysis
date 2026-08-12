@@ -9,7 +9,7 @@ A Model Context Protocol (MCP) server that connects Claude to Grafana Loki, enab
 | Component      | Description                                                                   |
 | -------------- | ----------------------------------------------------------------------------- |
 | **MCP Server** | Python script (`mcp-server-script.py`) that exposes Loki as tools via FastMCP |
-| **MCP Host**   | Claude Code (CLI or Desktop App) — runs and manages the MCP server process    |
+| **MCP Host**   | Claude Code (CLI or Desktop App), runs and manages the MCP server process     |
 | **MCP Client** | Claude — uses the tools exposed by the MCP server to query Loki               |
 
 ### Architecture
@@ -86,7 +86,7 @@ LOKI_USER=
 LOKI_PASS=
 ```
 
-> `LOKI_USER` and `LOKI_PASS` are optional — leave blank if your Loki instance has no authentication.
+> `LOKI_USER` and `LOKI_PASS` are optional, leave blank if your Loki instance has no authentication.
 
 ### 4. Register the MCP server with Claude Code
 
@@ -143,7 +143,7 @@ Add the following `mcpServers` block to `~/.claude/settings.json`:
 
 Then fully quit (`Cmd+Q`) and reopen the Desktop App.
 
-> **Important:** Always use the absolute path to `venv/bin/python3` — not the bare `python3` command. The Desktop App and CLI do not inherit your shell's PATH, so the bare command will resolve to the wrong Python (one that doesn't have the dependencies installed).
+> **Important:** Always use the absolute path to `venv/bin/python3` and not the bare `python3` command. The Desktop App and CLI do not inherit your shell's PATH, so the bare command will resolve to the wrong Python (one that doesn't have the dependencies installed).
 
 ---
 
