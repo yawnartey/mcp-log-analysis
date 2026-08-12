@@ -52,7 +52,7 @@ Grafana Loki
 ### 1. Clone the repository
 
 ```bash
-git clone <repo-url-will-be-here>
+git clone https://github.com/yawnartey/mcp-log-analysis.git
 cd mcp-log-analysis
 ```
 
