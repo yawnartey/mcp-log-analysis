@@ -9,8 +9,8 @@ load_dotenv(Path(__file__).parent / ".env")
 
 _env      = os.environ.get("LOKI_ENV", "dev").upper()
 LOKI_URL  = os.environ.get(f"LOKI_URL_{_env}", "").rstrip("/")
-LOKI_USER = os.environ.get("LOKI_USER", "")
-LOKI_PASS = os.environ.get("LOKI_PASS", "")
+LOKI_USER = os.environ.get(f"LOKI_USER_{_env}", os.environ.get("LOKI_USER", ""))
+LOKI_PASS = os.environ.get(f"LOKI_PASS_{_env}", os.environ.get("LOKI_PASS", ""))
 
 mcp = FastMCP("loki")
 

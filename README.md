@@ -77,11 +77,30 @@ Copy the example and fill in your values:
 cp .env.example .env
 ```
 
+#### Find your Loki data source ID in Grafana
+
+Loki is accessed through Grafana's data source proxy, so the URL needs the numeric `id` of the Loki data source. List all data sources from the Grafana API:
+
+```bash
+curl -s -u <grafana-user>:<grafana-pass> https://<grafana-host>/api/datasources | jq '.[] | select(.type=="loki") | {id, uid, name}'
+```
+
+> Using an API token instead of basic auth? Swap `-u <grafana-user>:<grafana-pass>` for `-H "Authorization: Bearer <api-token>"`.
+
+This prints each Loki data source's `id`, e.g.:
+
+```json
+{"id": 2, "uid": "dev-loki-uid", "name": "Loki - Dev"}
+{"id": 9, "uid": "prod-loki-uid", "name": "Loki - Prod"}
+```
+
+Construct the proxy URL from that `id`: `https://<grafana-host>/api/datasources/proxy/<id>`.
+
 Edit `.env`:
 
 ```env
-LOKI_URL_DEV=http://<dev-loki-host>:3100
-LOKI_URL_PROD=http://<prod-loki-host>:3100
+LOKI_URL_DEV=https://<grafana-host>/api/datasources/proxy/<dev-datasource-id>
+LOKI_URL_PROD=https://<grafana-host>/api/datasources/proxy/<prod-datasource-id>
 LOKI_USER=
 LOKI_PASS=
 ```
@@ -186,10 +205,10 @@ The `LOKI_ENV` variable (`dev` or `prod`) is injected by the MCP host config —
 
 ## Adding a New Environment
 
-1. Add the URL to `.env`:
+1. Find the staging Loki data source `id` (see [Find your Loki data source ID in Grafana](#find-your-loki-data-source-id-in-grafana)) and add the URL to `.env`:
 
    ```env
-   LOKI_URL_STAGING=http://<staging-loki-host>:3100
+   LOKI_URL_STAGING=https://<grafana-host>/api/datasources/proxy/<staging-datasource-id>
    ```
 
 2. Register with the CLI:
