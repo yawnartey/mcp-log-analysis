@@ -5,6 +5,7 @@ import shlex
 import fnmatch
 import posixpath
 import socket
+import shutil
 import threading
 import itertools
 from collections import deque
@@ -21,6 +22,12 @@ mcp = FastMCP("dir-analysis")
 
 MAX_OUTPUT_CHARS = int(os.environ.get("FILE_MAX_OUTPUT_CHARS", "100000"))
 SEARCH_TIMEOUT = int(os.environ.get("SEARCH_TIMEOUT_SECONDS", "120"))
+LOCAL_TRANSFER_DIRS = [
+    Path(p.strip()).expanduser().resolve()
+    for p in os.environ.get("LOCAL_TRANSFER_DIRS", "").split(",")
+    if p.strip()
+]
+MAX_TRANSFER_BYTES = int(os.environ.get("MAX_TRANSFER_BYTES", str(10 * 1024 ** 3)))
 
 
 class _Host:
@@ -144,6 +151,27 @@ def _walk(sftp, d: str, recursive: bool):
             yield full, a
             if recursive and stat.S_ISDIR(a.st_mode or 0):
                 stack.append(full)
+
+
+def _local_resolve(path: str) -> Path:
+    if not LOCAL_TRANSFER_DIRS:
+        raise PermissionError("No local transfer directories are allowed. Set LOCAL_TRANSFER_DIRS in .env.")
+    p = Path(path).expanduser()
+    if not p.is_absolute():
+        p = LOCAL_TRANSFER_DIRS[0] / p
+    p = p.resolve()
+    for root in LOCAL_TRANSFER_DIRS:
+        if p == root or root in p.parents:
+            return p
+    raise PermissionError(f"{p} is outside the local transfer directories: {', '.join(map(str, LOCAL_TRANSFER_DIRS))}")
+
+
+def _human(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
 
 
 @mcp.tool()
@@ -292,6 +320,108 @@ def search_files(host: str, path: str, pattern: str, file_glob: str = "*", regex
         return f"Error: search timed out after {SEARCH_TIMEOUT}s. Narrow the path or file_glob."
     except Exception as e:
         return f"Error: {e}"
+
+
+@mcp.tool()
+def download_file(host: str, remote_path: str, local_dir: str = "", overwrite: bool = False) -> str:
+    """
+    Copy a file from a host to this Mac (like scp host:file local_dir/). Max size is MAX_TRANSFER_BYTES (default 10 GB).
+
+    Args:
+        host:        Host name from list_hosts
+        remote_path: File on the host (must be inside the host's allowed directories)
+        local_dir:   Local folder to save into (must be inside LOCAL_TRANSFER_DIRS; default: the first one)
+        overwrite:   Replace the local file if it already exists
+    """
+    tmp = None
+    try:
+        h = _host(host)
+        with h.lock:
+            src = h.resolve(remote_path)
+            st = h.sftp.stat(src)
+            client = h.client
+        if not stat.S_ISREG(st.st_mode):
+            return f"Not a file: {h.name}:{src}"
+        if st.st_size > MAX_TRANSFER_BYTES:
+            return f"File is {_human(st.st_size)}, over the {_human(MAX_TRANSFER_BYTES)} limit."
+        dest_dir = _local_resolve(local_dir or ".")
+        if not dest_dir.is_dir():
+            return f"Local folder does not exist: {dest_dir}"
+        dest = dest_dir / posixpath.basename(src)
+        if dest.exists() and not overwrite:
+            return f"{dest} already exists. Set overwrite=True to replace it."
+        if shutil.disk_usage(dest_dir).free < st.st_size:
+            return f"Not enough free space in {dest_dir} for {_human(st.st_size)}."
+        tmp = dest.with_name(dest.name + ".part")
+        sftp = client.open_sftp()
+        try:
+            sftp.get(src, str(tmp))
+        finally:
+            sftp.close()
+        tmp.replace(dest)
+        tmp = None
+        return f"Downloaded {h.name}:{src} -> {dest} ({_human(st.st_size)})"
+    except Exception as e:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def upload_file(host: str, local_path: str, remote_dir: str, overwrite: bool = False) -> str:
+    """
+    Copy a file from this Mac to a host (like scp local_file host:remote_dir/). Max size is MAX_TRANSFER_BYTES (default 10 GB).
+    Uploading into hidden folders, or uploading hidden files, is not allowed.
+
+    Args:
+        host:       Host name from list_hosts
+        local_path: File on this Mac (must be inside LOCAL_TRANSFER_DIRS)
+        remote_dir: Existing folder on the host to put it in (must be inside the host's allowed directories)
+        overwrite:  Replace the remote file if it already exists
+    """
+    sftp = None
+    tmp = None
+    try:
+        h = _host(host)
+        src = _local_resolve(local_path)
+        if not src.is_file():
+            return f"Not a file: {src}"
+        size = src.stat().st_size
+        if size > MAX_TRANSFER_BYTES:
+            return f"File is {_human(size)}, over the {_human(MAX_TRANSFER_BYTES)} limit."
+        with h.lock:
+            dest_dir = h.resolve(remote_dir)
+            if not stat.S_ISDIR(h.sftp.stat(dest_dir).st_mode):
+                return f"Not a directory: {h.name}:{dest_dir}"
+            client = h.client
+        dest = posixpath.join(dest_dir, src.name)
+        if any(part.startswith(".") for part in dest.split("/")):
+            return f"Uploading to hidden files or folders is not allowed: {h.name}:{dest}"
+        sftp = client.open_sftp()
+        try:
+            sftp.stat(dest)
+            exists = True
+        except IOError:
+            exists = False
+        if exists and not overwrite:
+            return f"{h.name}:{dest} already exists. Set overwrite=True to replace it."
+        tmp = dest + ".part"
+        sftp.put(str(src), tmp)
+        if exists:
+            sftp.remove(dest)
+        sftp.rename(tmp, dest)
+        tmp = None
+        return f"Uploaded {src} -> {h.name}:{dest} ({_human(size)})"
+    except Exception as e:
+        if sftp is not None and tmp is not None:
+            try:
+                sftp.remove(tmp)
+            except IOError:
+                pass
+        return f"Error: {e}"
+    finally:
+        if sftp is not None:
+            sftp.close()
 
 
 if __name__ == "__main__":
